@@ -1,0 +1,47 @@
+{
+  "seed": 55,
+  "seeds": [
+    11,
+    22,
+    33,
+    44,
+    55
+  ],
+  "img_size": [
+    224,
+    224
+  ],
+  "batch_size": 32,
+  "epochs_max": 60,
+  "learning_rate": 0.0003,
+  "weight_decay": 0.0001,
+  "label_smoothing": 0.05,
+  "dropout": 0.3,
+  "se_reduction": 4,
+  "denoise_kernel": 3,
+  "clahe_clip": 2.0,
+  "clahe_grid": [
+    8,
+    8
+  ],
+  "c8_classes": [
+    "AMD",
+    "CNV",
+    "CSR",
+    "DME",
+    "DR",
+    "DRUSEN",
+    "MH",
+    "NORMAL"
+  ],
+  "oct2017_classes": [
+    "CNV",
+    "DME",
+    "DRUSEN",
+    "NORMAL"
+  ],
+  "c8_train_dir": "/home/yogesh.patel/execution/25_9_2026_PRD_work/RetinalOCT_Dataset/train",
+  "c8_val_dir": "/home/yogesh.patel/execution/25_9_2026_PRD_work/RetinalOCT_Dataset/val",
+  "oct2017_test_dir": "/home/yogesh.patel/execution/25_9_2026_PRD_work/OCT2017_Test/test",
+  "patience": 20
+}
