@@ -1,0 +1,201 @@
+name: Build and Release OCT Classifier APK
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'oct/**'
+      - '*.keras'
+      - '*.h5'
+      - '*.hdf5'
+      - '*.tflite'
+      - '.github/workflows/release_apk.yml'
+  workflow_dispatch:
+    inputs:
+      model_path:
+        description: 'Optional path to specific model file (e.g. best_CNN_SE_OCT8.keras)'
+        required: false
+        default: ''
+        type: string
+      release_title:
+        description: 'Optional custom release title'
+        required: false
+        default: ''
+        type: string
+      prerelease:
+        description: 'Mark this release as a pre-release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-apk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    name: Build & Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python ML Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install tensorflow tf-keras keras numpy
+
+      - name: Prepare and Convert Model Dynamically
+        id: model_prep
+        run: |
+          MODEL_ARG=""
+          if [ -n "${{ github.event.inputs.model_path }}" ]; then
+            MODEL_ARG="--model '${{ github.event.inputs.model_path }}'"
+          fi
+          python oct/scripts/prepare_model.py $MODEL_ARG
+
+          if [ -f "oct/assets/model_info.json" ]; then
+            echo "--- Model Metadata ---"
+            cat oct/assets/model_info.json
+            echo "----------------------"
+          fi
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Configure Gradle Environment
+        run: |
+          echo "GRADLE_OPTS=-Dorg.gradle.jvmargs=\"-Xmx3584m -XX:MaxMetaspaceSize=1024m\"" >> $GITHUB_ENV
+
+      - name: Flutter Dependencies and Verification
+        working-directory: oct
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+
+      - name: Build Android Release APK
+        working-directory: oct
+        run: |
+          flutter build apk --release
+
+      - name: Package Release Assets
+        id: package
+        run: |
+          mkdir -p dist
+          APK_SRC="oct/build/app/outputs/flutter-apk/app-release.apk"
+          APK_DEST="dist/OCT-Classifier-release.apk"
+
+          if [ ! -f "$APK_SRC" ]; then
+            echo "Error: Release APK not found at $APK_SRC"
+            exit 1
+          fi
+
+          cp "$APK_SRC" "$APK_DEST"
+
+          cd dist
+          sha256sum OCT-Classifier-release.apk > OCT-Classifier-release.apk.sha256
+          SHA256_HASH=$(cat OCT-Classifier-release.apk.sha256 | awk '{print $1}')
+          cd ..
+
+          if [ -f "oct/assets/model_info.json" ]; then
+            cp oct/assets/model_info.json dist/model_info.json
+          fi
+          if [ -f "oct/assets/labels.txt" ]; then
+            cp oct/assets/labels.txt dist/labels.txt
+          fi
+
+          echo "apk_path=$APK_DEST" >> $GITHUB_OUTPUT
+          echo "sha256=$SHA256_HASH" >> $GITHUB_OUTPUT
+
+      - name: Generate Release Metadata
+        id: meta
+        run: |
+          RUN_NUM="${{ github.run_number }}"
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          TAG_NAME="v1.0.${RUN_NUM}"
+
+          CUSTOM_TITLE="${{ github.event.inputs.release_title }}"
+          if [ -n "$CUSTOM_TITLE" ]; then
+            TITLE="$CUSTOM_TITLE ($TAG_NAME)"
+          else
+            TITLE="OCT Classifier Release $TAG_NAME"
+          fi
+
+          MODEL_INFO="N/A"
+          CLASSES_INFO="Default (8 classes)"
+          if [ -f "oct/assets/model_info.json" ]; then
+            SOURCE_MODEL=$(jq -r '.source_model // "Unknown"' oct/assets/model_info.json)
+            INPUT_SHAPE=$(jq -r '.input_shape | @json' oct/assets/model_info.json)
+            NUM_CLASSES=$(jq -r '.num_classes // "Unknown"' oct/assets/model_info.json)
+            CLASSES_INFO=$(jq -r '.classes | join(", ")' oct/assets/model_info.json)
+            MODEL_INFO="Source Model: \`$SOURCE_MODEL\` (Input Shape: \`$INPUT_SHAPE\`, Classes: $NUM_CLASSES)"
+          fi
+
+          cat << EOF > release_body.md
+          ## OCT Eye Classifier Android APK ($TAG_NAME)
+
+          Automated on-device OCT retinal classification APK built from commit \`$SHORT_SHA\`.
+
+          ### Model Details
+          - **Model Specification**: $MODEL_INFO
+          - **Supported Classes**: $CLASSES_INFO
+
+          ### Artifacts & Integrity
+          - **Binary**: \`OCT-Classifier-release.apk\`
+          - **SHA-256**: \`${{ steps.package.outputs.sha256 }}\`
+
+          ### Installation
+          1. Download \`OCT-Classifier-release.apk\` below.
+          2. Install on Android device (enable "Install unknown apps" if prompted).
+          3. Open the app, pick images from gallery, and classify instantly on-device!
+          EOF
+
+          echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+
+      - name: Upload Artifact to GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: OCT-Classifier-release-apk
+          path: dist/
+          retention-days: 30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.title }}
+          body_path: release_body.md
+          files: |
+            dist/OCT-Classifier-release.apk
+            dist/OCT-Classifier-release.apk.sha256
+            dist/model_info.json
+            dist/labels.txt
+          draft: false
+          prerelease: ${{ github.event.inputs.prerelease || false }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
