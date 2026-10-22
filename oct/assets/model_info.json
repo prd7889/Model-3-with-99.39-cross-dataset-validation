@@ -1,0 +1,15 @@
+{
+  "model_name": "oct_model_float32.tflite",
+  "input_shape": [1, 200, 200, 3],
+  "num_classes": 8,
+  "labels": [
+    "AMD",
+    "CNV",
+    "CSR",
+    "DME",
+    "DR",
+    "DRUSEN",
+    "MH",
+    "NORMAL"
+  ]
+}
